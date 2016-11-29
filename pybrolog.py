@@ -130,19 +130,31 @@ def create_logstash_conf(brolog):
     skeleton_dict['csv_columns'] = brolog.csv_columns
     skeleton_dict['path'] = brolog.path
     skeleton_dict['geoip_block'] = ''
+    skeleton_dict['mutate_convert_block'] = ''
 
+    # For each field, we enrich IP addresses with geoip data
+    # ... and will convert all integers, well, to integers
+    for field in brolog.fields:
     # For each IP address, we will create a geoip point
     # They usually end with "_h" ... e.g id.orig_h, id.resp_h
-    for field in brolog.fields:
-        abs_field = match(r'(.+)_h$', field)
-        if abs_field:
+        ip_field = match(r'(.+)_h$', field)
+        int_field = match(r'(.+)(?:_p$|_bytes$|_pkts$)', field)
+
+        if ip_field:
             geoip_conf_block = '''
         geoip {{
                 source => "{}"
                 target => "geoip_{}"
-            }}\n'''.format(field, abs_field.group(1).replace('.', '_'))
+            }}\n'''.format(field, ip_field.group(1).replace('.', '_'))
             skeleton_dict['geoip_block'] = skeleton_dict['geoip_block'] + geoip_conf_block
+        if int_field:
+            field_convert = '                convert => ["{}", "integer"]\n'.format(field)
+            skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
+    # Converting Bro integer types to logstash integer
+    # anything ending with '_p', '_bytes' or '_pkts' are usually integers
 
+
+    #   
     skeleton = '''
 ### INPUT BLOCK ###
 input {{
@@ -176,7 +188,7 @@ filter {{
 
         # convert all addressess to IPs, all port to ints ... etc.
         mutate {{
-            convert => 
+{mutate_convert_block}
         }}
     }}
 }}
