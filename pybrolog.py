@@ -1,7 +1,9 @@
 ''' Bro IDS logs library '''
 
+import gzip
 from datetime import datetime
 from re import match
+
 
 
 class BroLogBase():
@@ -21,7 +23,11 @@ class BroLogBase():
 
     def __init__(self, log_file, datetime_to_isoformat=False):
         self.datetime_to_isoformat = datetime_to_isoformat
-        self.log_file = open(log_file, 'r')
+        # gzip compressed?
+        if log_file.endswith('.gz'):
+            self.log_file = gzip.open(log_file, 'rt', encoding='utf-8')
+        else:
+            self.log_file = open(log_file, 'r', encoding='utf-8')
         self.parameters_dict = self.__get_parameters()
         for key in self.parameters_dict:
             setattr(self, key, self.parameters_dict[key])
@@ -137,6 +143,7 @@ def create_logstash_conf(brolog):
     for field in brolog.fields:
     # For each IP address, we will create a geoip point
     # They usually end with "_h" ... e.g id.orig_h, id.resp_h
+    # Valid conversion targets are: integer, float, string, and boolean.
         ip_field = match(r'(.+)_h$', field)
         int_field = match(r'(.+)(?:_p$|_bytes$|_pkts$)', field)
 
@@ -153,8 +160,6 @@ def create_logstash_conf(brolog):
     # Converting Bro integer types to logstash integer
     # anything ending with '_p', '_bytes' or '_pkts' are usually integers
 
-
-    #   
     skeleton = '''
 ### INPUT BLOCK ###
 input {{
