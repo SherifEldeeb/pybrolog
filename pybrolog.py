@@ -27,7 +27,7 @@ class BroLogBase():
         if log_file.endswith('.gz'):
             self.log_file = gzip.open(log_file, 'rt', encoding='utf-8')
         else:
-            self.log_file = open(log_file, 'r', encoding='utf-8')
+            self.log_file = open(log_file, 'r')
         self.parameters_dict = self.__get_parameters()
         for key in self.parameters_dict:
             setattr(self, key, self.parameters_dict[key])
@@ -138,9 +138,9 @@ def create_logstash_conf(brolog):
     skeleton_dict['geoip_block'] = ''
     skeleton_dict['mutate_convert_block'] = ''
 
-    # For each field, we enrich IP addresses with geoip data
+    # Conversions and enrichments
     for field in brolog.fields:
-    # For each IP address, we will create a geoip point
+        # For each IP address, we will create a geoip point
         if brolog.fields_types[field] == 'addr':
             geoip_conf_block = '''
         geoip {{
@@ -148,19 +148,22 @@ def create_logstash_conf(brolog):
                 target => "geoip_{}"
             }}\n'''.format(field, field.replace('.', '_')) # elasticsearch doesn't like dots
             skeleton_dict['geoip_block'] = skeleton_dict['geoip_block'] + geoip_conf_block
-    # Converting Bro integer types to logstash integer
-    # Valid conversion targets are: integer, float, string, and boolean.
+        # Converting Bro integer types to logstash integer
+        # Valid conversion targets are: integer, float, string, and boolean.
+        if '.' in field: # replace dot with _
+            field_convert = '                rename => {{ "{}" => "{}" }}\n'.format(field, field.replace('.', '_'))
+            skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
         if brolog.fields_types[field] in ['count', 'port']:
-            field_convert = '                convert => ["{}", "integer"]\n'.format(field)
+            field_convert = '                convert => {{ "{}" => "integer" }}\n'.format(field.replace('.', '_'))
             skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
         if brolog.fields_types[field] == 'bool':
-            field_convert = '                convert => ["{}", "bool"]\n'.format(field)
+            field_convert = '                convert => {{ "{}" => "boolean" }}\n'.format(field.replace('.', '_'))
             skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
         if brolog.fields_types[field] == 'interval':
-            field_convert = '                convert => ["{}", "float"]\n'.format(field)
+            field_convert = '                convert => {{ "{}" => "float" }}\n'.format(field.replace('.', '_'))
             skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
-        if '.' in field: # replace dot with _
-            field_convert = '                rename => ["{}", "{}"]\n'.format(field, field.replace('.', '_'))
+        if 'vector' in brolog.fields_types[field]:
+            field_convert = '                split => {{ "{}" => "{}" }}\n'.format(field.replace('.', '_'), brolog.set_separator)
             skeleton_dict['mutate_convert_block'] = skeleton_dict['mutate_convert_block'] + field_convert
 
     skeleton = '''
@@ -177,11 +180,11 @@ input {{
 
 ### FILTER BLOCK ###
 filter {{
-    if [message] =~ /^#/ {{
-        drop {{ }}
-    }}
-
     if [type] == "{path}" {{
+        if [message] =~ /^#/ {{
+            drop {{ }}
+        }}
+
         csv {{
             columns => [{csv_columns}]
             separator => "{separator}"
@@ -191,10 +194,10 @@ filter {{
             match => [ "ts", "UNIX" ] 
         }}
 
-        # for each IP address in the fields, we want geoip info
+        # for each IP address in the fields, get geoip info
 {geoip_block}
 
-        # convert all bro types to ES, and removing dots from field names.
+        # convert all bro types to logstash types, and removing dots from field names.
         mutate {{
 {mutate_convert_block}
         }}
@@ -204,7 +207,9 @@ filter {{
 ### OUTPUT BLOCK ###
 output {{
     if [type] == "{path}" {{
-        
+        stdout {{
+            codec => "rubydebug"
+        }}
     }}
 }}
     '''.format(**skeleton_dict)
